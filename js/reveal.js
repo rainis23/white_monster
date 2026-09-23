@@ -1,7 +1,7 @@
 // "Hologram print" effect shared by every material in the scene.
 // Fragments above uReveal (world y, with a little noise) are discarded, and a
 // glowing seam is drawn right at the cut. uGlow washes the whole object in the
-// seam colour, which is how the can "charges up" before it transforms.
+// seam colour, which is how things "charge up" before they transform.
 import * as THREE from 'three';
 
 export function makeReveal() {
@@ -12,7 +12,8 @@ export function makeReveal() {
   };
 }
 
-const NOISE = /* glsl */ `
+// GLSL pieces, also used directly by the toon shader (toon.js)
+export const REVEAL_PARS = /* glsl */ `
   varying vec3 vRevealWorld;
   uniform float uReveal;
   uniform float uGlow;
@@ -35,6 +36,17 @@ const NOISE = /* glsl */ `
   }
 `;
 
+export const REVEAL_DISCARD = /* glsl */ `
+  float revealDist = uReveal + ( revealNoise( vRevealWorld * 16.0 ) - 0.5 ) * 0.1 - vRevealWorld.y;
+  if ( revealDist < 0.0 ) discard;
+`;
+
+export const REVEAL_SEAM = /* glsl */ `
+  float revealSeam = 1.0 - smoothstep( 0.0, 0.08, revealDist );
+  gl_FragColor.rgb += uEdgeColor * ( revealSeam * 7.0 + uGlow );
+`;
+
+// Patch a built-in (Standard/Physical/Basic) material.
 export function applyReveal(material, uniforms) {
   const previous = material.onBeforeCompile;
   const previousKey = material.customProgramCacheKey();
@@ -56,19 +68,9 @@ export function applyReveal(material, uniforms) {
       );
 
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', `#include <common>\n${NOISE}`)
-      .replace(
-        '#include <clipping_planes_fragment>',
-        `#include <clipping_planes_fragment>
-        float revealDist = uReveal + ( revealNoise( vRevealWorld * 16.0 ) - 0.5 ) * 0.1 - vRevealWorld.y;
-        if ( revealDist < 0.0 ) discard;`,
-      )
-      .replace(
-        '#include <opaque_fragment>',
-        `#include <opaque_fragment>
-        float revealSeam = 1.0 - smoothstep( 0.0, 0.08, revealDist );
-        gl_FragColor.rgb += uEdgeColor * ( revealSeam * 7.0 + uGlow );`,
-      );
+      .replace('#include <common>', `#include <common>\n${REVEAL_PARS}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>\n${REVEAL_DISCARD}`)
+      .replace('#include <opaque_fragment>', `#include <opaque_fragment>\n${REVEAL_SEAM}`);
   };
   material.customProgramCacheKey = () => `${previousKey}|reveal`;
   return material;

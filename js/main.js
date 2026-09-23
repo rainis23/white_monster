@@ -6,19 +6,14 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import {
-  canLabelTexture,
-  faceTextures,
-  fishnetTexture,
-  corsetTexture,
-  tartanTexture,
-  hairTexture,
-  sigilTexture,
-  blobShadowTexture,
-} from './textures.js';
-import { createCan, CAN_HEIGHT } from './can.js';
-import { createBaddie, BADDIE_HEIGHT } from './baddie.js';
+import { fishnetTexture, corsetTexture, tartanTexture, sigilTexture, blobShadowTexture } from './textures.js';
+import { canLabelTextures } from './label.js';
+import { animeFaceTextures } from './face.js';
+import { createCan, loadCanModel, CAN_HEIGHT } from './can.js';
+import { createAvatar, AVATAR_HEIGHT } from './avatar.js';
+import { toonLight } from './toon.js';
 import { makeReveal } from './reveal.js';
+import { CAN_MODEL_URL } from './config.js';
 import { createStage, PEDESTAL_TOP } from './stage.js';
 import { MorphParticles, createSurfaceSampler, DEPART_END, ARRIVE_START } from './particles.js';
 import { Sfx } from './audio.js';
@@ -50,10 +45,11 @@ const CAPTIONS = {
   ],
   baddie: [
     'she’s not a drink. she’s a lifestyle 🖤',
-    'powered by eyeliner & aspartame',
-    'goth gf starter pack: platforms, chains, a white monster',
+    'loaded in t-posing and still ate',
+    'avatar performance rank: very poor. aura: excellent',
+    'mirror dweller. white monster in hand. do not disturb.',
+    'full body tracking, zero sugar',
     'her wing could cut glass',
-    'she heard “energy drink” and chose violence',
     'tap her again. she knows her angles.',
   ],
 };
@@ -62,7 +58,7 @@ const CAPTIONS = {
 // Subjects sit a little above centre so the bottom controls never cover them.
 const FRAMING = {
   can: { bottom: PEDESTAL_TOP + CAN_FLOAT, top: PEDESTAL_TOP + CAN_FLOAT + CAN_HEIGHT, halfWidth: 0.75, fill: 0.62 },
-  baddie: { bottom: PEDESTAL_TOP, top: PEDESTAL_TOP + BADDIE_HEIGHT, halfWidth: 0.85, fill: 0.74 },
+  baddie: { bottom: PEDESTAL_TOP, top: PEDESTAL_TOP + AVATAR_HEIGHT, halfWidth: 0.8, fill: 0.8 },
 };
 
 function withTimeout(promise, ms) {
@@ -95,6 +91,7 @@ async function init() {
       document.fonts.load('96px "Anton"'),
       document.fonts.load('600 30px "Space Grotesk"'),
       document.fonts.load('500 30px "Space Grotesk"'),
+      ...[300, 500, 600, 700, 800].map((w) => document.fonts.load(`${w} 40px "Montserrat"`)),
     ]),
     4000,
   ).catch(() => {});
@@ -104,8 +101,9 @@ async function init() {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  // Neutral keeps the toon colours and the white can true to their albedo
+  renderer.toneMapping = THREE.NeutralToneMapping;
+  renderer.toneMappingExposure = 1.0;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
@@ -135,24 +133,32 @@ async function init() {
   fill.position.set(-5, 2.5, 4);
   const rimViolet = new THREE.DirectionalLight(0x8f5dff, 3.2);
   rimViolet.position.set(-4, 3.5, -5);
-  const rimRose = new THREE.DirectionalLight(0xff4d8d, 2.0);
+  const rimRose = new THREE.DirectionalLight(0xff4d8d, 1.3);
   rimRose.position.set(4.5, 2.5, -4);
   const underGlow = new THREE.PointLight(0xa07bff, 3, 5, 2);
   underGlow.position.set(0, PEDESTAL_TOP + 0.25, 1.3);
   scene.add(key, fill, rimViolet, rimRose, underGlow);
 
   /* ---------------- textures ---------------- */
-  const labelMap = canLabelTexture();
+  const label = canLabelTextures();
   const tex = {
-    face: faceTextures(),
-    fishnet: fishnetTexture({ cells: 4, width: 4.6 }),
-    mesh: fishnetTexture({ cells: 8, width: 6.4, base: '#cbb9b9' }),
-    corset: corsetTexture({ neckY: 225, waistY: 730 }),
+    face: animeFaceTextures(),
+    mesh: fishnetTexture({ cells: 8, width: 6.4, base: '#e2d0d0' }),
+    corset: corsetTexture({ neckY: 247, waistY: 640 }),
     tartan: tartanTexture(),
-    hair: hairTexture(),
   };
   const aniso = renderer.capabilities.getMaxAnisotropy();
-  [labelMap, tex.face.open, tex.face.closed, tex.corset].forEach((t) => (t.anisotropy = aniso));
+  [label.map, label.orm, tex.face.open, tex.face.closed, tex.corset].forEach((t) => (t.anisotropy = aniso));
+
+  // procedural can by default; a downloaded model if js/config.js points at one
+  let makeCan = (reveal) => createCan({ label, reveal });
+  if (CAN_MODEL_URL) {
+    try {
+      makeCan = await loadCanModel(CAN_MODEL_URL);
+    } catch (err) {
+      console.warn(`Couldn't load ${CAN_MODEL_URL}, using the built-in can instead.`, err);
+    }
+  }
 
   /* ---------------- stage ---------------- */
   const stage = createStage({ sigilMap: sigilTexture(), shadowMap: blobShadowTexture(), horizon: scene.fog.color });
@@ -161,14 +167,14 @@ async function init() {
   /* ---------------- the can ---------------- */
   const canReveal = makeReveal();
   const canRig = new THREE.Group();
-  const can = createCan({ labelMap, reveal: canReveal });
+  const can = makeCan(canReveal);
   canRig.add(can);
   canRig.position.y = PEDESTAL_TOP + CAN_FLOAT;
   scene.add(canRig);
 
   /* ---------------- the baddie ---------------- */
   const baddieReveal = makeReveal();
-  const baddie = createBaddie({ tex, reveal: baddieReveal, labelMap });
+  const baddie = createAvatar({ tex, reveal: baddieReveal, makeCan });
   baddie.root.position.y = PEDESTAL_TOP;
   baddie.root.visible = false;
   baddieReveal.uReveal.value = -1e4;
@@ -185,7 +191,7 @@ async function init() {
     baddie: {
       object: baddie.root,
       reveal: baddieReveal,
-      bounds: () => [PEDESTAL_TOP - 0.02, PEDESTAL_TOP + BADDIE_HEIGHT],
+      bounds: () => [PEDESTAL_TOP - 0.02, PEDESTAL_TOP + AVATAR_HEIGHT - 0.3],
       sampler: null,
       sampleRoot: baddie.root,
     },
@@ -218,12 +224,14 @@ async function init() {
 
   function frame(mode) {
     const f = FRAMING[mode];
+    // on tall phone screens the title sits over the scene, so leave headroom for it
+    const top = f.top + (camera.aspect < 0.8 ? 0.12 * (f.top - f.bottom) : 0);
     const tanV = Math.tan((camera.fov * Math.PI) / 360);
-    const byHeight = (f.top - f.bottom) / f.fill / (2 * tanV);
+    const byHeight = (top - f.bottom) / f.fill / (2 * tanV);
     const byWidth = f.halfWidth / (tanV * camera.aspect);
     const dist = Math.max(byHeight, byWidth);
     const viewH = 2 * dist * tanV;
-    return { target: new THREE.Vector3(0, (f.bottom + f.top) / 2 - 0.07 * viewH, 0), dist };
+    return { target: new THREE.Vector3(0, (f.bottom + top) / 2 - 0.07 * viewH, 0), dist };
   }
   {
     const f = frame('can');
@@ -232,7 +240,7 @@ async function init() {
   }
 
   /* ---------------- state ---------------- */
-  const state = { mode: 'can', busy: false, tr: null, canSpin: 0, canFlip: 0 };
+  const state = { mode: 'can', busy: false, tr: null, canSpin: 0, canFlip: 0, snap: 0 };
   const pointer = { x: 0, y: 0 };
   const sfx = new Sfx();
   try {
@@ -335,6 +343,23 @@ async function init() {
     sfx.boom();
     popup(tr.toBaddie ? 'baddie mode' : 'back in the can');
     setCaption(state.mode, false);
+    // like every VRChat avatar she loads in T-posing, holds it for a beat, then snaps into her pose
+    if (tr.toBaddie) state.snap = 1.7;
+  }
+
+  // 0 = posed, 1 = T-pose; plus how visible her nameplate is
+  function avatarPose(dt) {
+    const tr = state.tr;
+    if (tr && tr.toBaddie) {
+      const arrive = tr.started ? clamp01((particles.uniforms.uProgress.value - ARRIVE_START) / (1 - ARRIVE_START), 0, 1) : 0;
+      return { tpose: 1, plate: arrive };
+    }
+    if (tr) {
+      const c = clamp01(tr.t / (T_CHARGE * 0.7), 0, 1);
+      return { tpose: c * c * (3 - 2 * c), plate: 1 - c };
+    }
+    if (state.snap > 0) state.snap = Math.max(0, state.snap - dt / 0.45);
+    return { tpose: Math.pow(Math.min(1, state.snap), 3), plate: state.mode === 'baddie' ? 1 : 0 };
   }
 
   const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
@@ -434,7 +459,12 @@ async function init() {
         can.position.y = 0;
       }
     }
-    if (baddie.root.visible) baddie.update(t, dt, pointer);
+    if (baddie.root.visible) {
+      const pose = avatarPose(dt);
+      baddie.setTPose(pose.tpose);
+      baddie.setNameplate(pose.plate);
+      baddie.update(t, dt, pointer);
+    }
 
     const transforming = !!state.tr;
     stage.update(t, dt, {
@@ -444,6 +474,9 @@ async function init() {
     });
 
     controls.update();
+    camera.updateMatrixWorld();
+    toonLight.uTime.value = t;
+    toonLight.uLightDir.value.copy(key.position).normalize().transformDirection(camera.matrixWorldInverse);
     composer.render();
   }
 
@@ -471,9 +504,7 @@ async function init() {
     /* compileAsync is only an optimisation */
   }
   hidden.forEach((o) => (o.visible = false));
-  [tex.face.open, tex.face.closed, tex.corset, tex.fishnet, tex.mesh, tex.tartan, tex.hair].forEach((t) =>
-    renderer.initTexture(t),
-  );
+  [label.map, label.orm, tex.face.open, tex.face.closed, tex.corset, tex.mesh, tex.tartan].forEach((t) => renderer.initTexture(t));
 
   renderer.setAnimationLoop(tick);
   setButton(state.mode, false);
