@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>White Monster · Baddie Edition</title>
+  <meta name="description" content="A 3D white monster can on a hologram projector. Press the button and she becomes a goth baddie.">
+  <meta name="theme-color" content="#07060a">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect x='18' y='6' width='28' height='52' rx='6' fill='%23f4f3f7'/%3E%3Cpath d='M26 18l4 26M32 16l2 30M38 18l-2 26' stroke='%23111' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Anton&family=Space+Grotesk:wght@400;500;700&family=UnifrakturMaguntia&display=swap">
+  <link rel="stylesheet" href="style.css">
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.186.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.186.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body data-mode="can">
+  <canvas id="scene" aria-label="3D hologram of a white energy drink can that transforms into a goth baddie"></canvas>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <header class="brand">
+    <h1 class="title">White Monster</h1>
+    <p class="tagline">zero sugar <span aria-hidden="true">†</span> all attitude</p>
+  </header>
+
+  <button id="sound" class="chip sound" type="button" aria-pressed="true">
+    <span class="dot" aria-hidden="true"></span><span class="chip-label">sound on</span>
+  </button>
+
+  <div class="bottom">
+    <p id="caption" class="caption" aria-live="polite">pov: u cracked open a white monster at 3am</p>
+    <button id="transform" class="transform" type="button" disabled>
+      <span class="cross" aria-hidden="true">†</span>
+      <span class="transform-label">unleash the baddie</span>
+      <span class="cross" aria-hidden="true">†</span>
+    </button>
+    <p class="hint">drag to orbit · scroll to zoom · tap her for attitude</p>
+  </div>
+
+  <div id="flash" class="flash" aria-hidden="true"></div>
+  <div id="popup" class="popup" aria-hidden="true"><span></span></div>
+
+  <div id="loader" class="loader" role="status">
+    <span class="loader-title">White Monster</span>
+    <span class="loader-text">summoning…</span>
+  </div>
+
+  <footer class="fineprint">fan-made parody · not affiliated with any energy drink brand</footer>
+
+  <noscript><p class="noscript">she needs JavaScript to exist.</p></noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
