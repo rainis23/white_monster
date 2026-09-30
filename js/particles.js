@@ -111,11 +111,59 @@ export class MorphParticles {
 }
 
 // Area-weighted surface sampling across every mesh under `root`.
+// Area-weighted random points on a skinned mesh, in its current pose.
+function skinnedSampler(mesh) {
+  const pos = mesh.geometry.attributes.position;
+  const index = mesh.geometry.index;
+  const tris = index ? index.count / 3 : pos.count / 3;
+  const vert = (i) => (index ? index.getX(i) : i);
+  const cumulative = new Float32Array(tris);
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  let total = 0;
+  for (let i = 0; i < tris; i++) {
+    a.fromBufferAttribute(pos, vert(i * 3));
+    b.fromBufferAttribute(pos, vert(i * 3 + 1));
+    c.fromBufferAttribute(pos, vert(i * 3 + 2));
+    total += b.sub(a).cross(c.sub(a)).length() / 2;
+    cumulative[i] = total;
+  }
+  return {
+    area: total,
+    sample(target) {
+      const r = Math.random() * total;
+      let lo = 0;
+      let hi = tris - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (cumulative[mid] < r) lo = mid + 1;
+        else hi = mid;
+      }
+      let u = Math.random();
+      let v = Math.random();
+      if (u + v > 1) {
+        u = 1 - u;
+        v = 1 - v;
+      }
+      mesh.getVertexPosition(vert(lo * 3), a);
+      mesh.getVertexPosition(vert(lo * 3 + 1), b);
+      mesh.getVertexPosition(vert(lo * 3 + 2), c);
+      return target.copy(a).multiplyScalar(1 - u - v).addScaledVector(b, u).addScaledVector(c, v);
+    },
+  };
+}
+
 export function createSurfaceSampler(root) {
   const entries = [];
   const scale = new THREE.Vector3();
   root.traverse((o) => {
     if (!o.isMesh || o.isInstancedMesh || o.userData.sample === false) return;
+    if (o.isSkinnedMesh) {
+      const s = skinnedSampler(o);
+      entries.push({ mesh: o, sampler: s, area: s.area });
+      return;
+    }
     const sampler = new MeshSurfaceSampler(o).build();
     const area = sampler.distribution[sampler.distribution.length - 1];
     entries.push({ mesh: o, sampler, area });

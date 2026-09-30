@@ -236,6 +236,19 @@ body[data-mode="baddie"] .tagline::after {
   pointer-events: none;
 }
 
+.fineprint a {
+  color: inherit;
+  pointer-events: auto;
+  text-decoration: underline;
+  text-decoration-color: rgba(244, 242, 248, 0.18);
+  text-underline-offset: 2px;
+}
+
+.fineprint a:hover,
+.fineprint a:focus-visible {
+  color: rgba(244, 242, 248, 0.7);
+}
+
 /* ---------- transform fx ---------- */
 
 .flash {
@@ -335,7 +348,9 @@ body.shake #scene { animation: shake 0.12s linear infinite; }
   .caption { font-size: 13px; }
   .transform { padding: 16px 22px; font-size: 13px; letter-spacing: 0.2em; }
   .hint { font-size: 10px; letter-spacing: 0.12em; }
-  .fineprint { left: var(--gutter); text-align: center; }
+  .fineprint { left: var(--gutter); text-align: center; font-size: 9px; letter-spacing: 0.04em; line-height: 1.5; }
+  /* the credits wrap onto a few lines here, so lift the controls clear of them */
+  .bottom { bottom: max(56px, calc(env(safe-area-inset-bottom) + 50px)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

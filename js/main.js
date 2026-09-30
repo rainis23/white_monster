@@ -6,18 +6,9 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
-import {
-  canLabelTexture,
-  faceTextures,
-  fishnetTexture,
-  corsetTexture,
-  tartanTexture,
-  hairTexture,
-  sigilTexture,
-  blobShadowTexture,
-} from './textures.js';
-import { createCan, CAN_HEIGHT } from './can.js';
-import { createBaddie, BADDIE_HEIGHT } from './baddie.js';
+import { sigilTexture, blobShadowTexture } from './textures.js';
+import { loadCanAsset, createCan, CAN_HEIGHT } from './can.js';
+import { loadAvatar, BADDIE_HEIGHT } from './avatar.js';
 import { makeReveal } from './reveal.js';
 import { createStage, PEDESTAL_TOP } from './stage.js';
 import { MorphParticles, createSurfaceSampler, DEPART_END, ARRIVE_START } from './particles.js';
@@ -88,14 +79,9 @@ async function init() {
     return;
   }
 
-  // canvas textures need the web fonts ready before painting
+  // the projector's sigil is painted with the web fonts
   await withTimeout(
-    Promise.all([
-      document.fonts.load('150px "UnifrakturMaguntia"'),
-      document.fonts.load('96px "Anton"'),
-      document.fonts.load('600 30px "Space Grotesk"'),
-      document.fonts.load('500 30px "Space Grotesk"'),
-    ]),
+    Promise.all([document.fonts.load('64px "UnifrakturMaguntia"'), document.fonts.load('600 30px "Space Grotesk"')]),
     4000,
   ).catch(() => {});
 
@@ -141,38 +127,23 @@ async function init() {
   underGlow.position.set(0, PEDESTAL_TOP + 0.25, 1.3);
   scene.add(key, fill, rimViolet, rimRose, underGlow);
 
-  /* ---------------- textures ---------------- */
-  const labelMap = canLabelTexture();
-  const tex = {
-    face: faceTextures(),
-    fishnet: fishnetTexture({ cells: 4, width: 4.6 }),
-    mesh: fishnetTexture({ cells: 8, width: 6.4, base: '#cbb9b9' }),
-    corset: corsetTexture({ neckY: 225, waistY: 730 }),
-    tartan: tartanTexture(),
-    hair: hairTexture(),
-  };
-  const aniso = renderer.capabilities.getMaxAnisotropy();
-  [labelMap, tex.face.open, tex.face.closed, tex.corset].forEach((t) => (t.anisotropy = aniso));
+  const aniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  // multisampled post-processing, except on high-density screens where it costs the most and shows the least
+  const samples = window.devicePixelRatio > 1.5 ? 0 : 4;
 
   /* ---------------- stage ---------------- */
   const stage = createStage({ sigilMap: sigilTexture(), shadowMap: blobShadowTexture(), horizon: scene.fog.color });
   scene.add(stage.group);
 
   /* ---------------- the can ---------------- */
+  const small = Math.min(window.screen.width, window.screen.height) < 700 || renderer.capabilities.maxTextureSize < 4096;
+  const canAsset = await loadCanAsset({ small, anisotropy: aniso });
   const canReveal = makeReveal();
   const canRig = new THREE.Group();
-  const can = createCan({ labelMap, reveal: canReveal });
+  const can = createCan(canAsset, { reveal: canReveal });
   canRig.add(can);
   canRig.position.y = PEDESTAL_TOP + CAN_FLOAT;
   scene.add(canRig);
-
-  /* ---------------- the baddie ---------------- */
-  const baddieReveal = makeReveal();
-  const baddie = createBaddie({ tex, reveal: baddieReveal, labelMap });
-  baddie.root.position.y = PEDESTAL_TOP;
-  baddie.root.visible = false;
-  baddieReveal.uReveal.value = -1e4;
-  scene.add(baddie.root);
 
   const rigs = {
     can: {
@@ -182,12 +153,13 @@ async function init() {
       sampler: null,
       sampleRoot: can,
     },
+    // filled in once she has streamed in (see below)
     baddie: {
-      object: baddie.root,
-      reveal: baddieReveal,
+      object: null,
+      reveal: makeReveal(),
       bounds: () => [PEDESTAL_TOP - 0.02, PEDESTAL_TOP + BADDIE_HEIGHT],
       sampler: null,
-      sampleRoot: baddie.root,
+      sampleRoot: null,
     },
   };
 
@@ -195,7 +167,10 @@ async function init() {
   scene.add(particles.points);
 
   /* ---------------- post ---------------- */
-  const composer = new EffectComposer(renderer);
+  const composer = new EffectComposer(
+    renderer,
+    new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight, { type: THREE.HalfFloatType, samples }),
+  );
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 0.5, 0.45, 2.8);
   composer.addPass(bloom);
@@ -230,6 +205,33 @@ async function init() {
     controls.target.copy(f.target);
     camera.position.sub(f.target).setLength(f.dist).add(f.target);
   }
+
+  /* ---------------- the baddie: loads while the can is on show ---------------- */
+  let baddie = null;
+  let baddieFailed = false;
+  rigs.baddie.reveal.uReveal.value = -1e4;
+  const baddieReady = loadAvatar({ reveal: rigs.baddie.reveal, canAsset, anisotropy: aniso, msaa: samples > 0 })
+    .then(async (b) => {
+      b.root.position.y = PEDESTAL_TOP;
+      // compile her shaders and upload her textures before she's needed, so the
+      // transformation doesn't stutter
+      try {
+        await renderer.compileAsync(b.root, camera, scene);
+      } catch {
+        /* compileAsync is only an optimisation */
+      }
+      b.maps.forEach((t) => renderer.initTexture(t));
+      b.root.visible = false;
+      scene.add(b.root);
+      rigs.baddie.object = b.root;
+      rigs.baddie.sampleRoot = b.root;
+      baddie = b;
+      return b;
+    })
+    .catch((err) => {
+      console.error(err);
+      baddieFailed = true;
+    });
 
   /* ---------------- state ---------------- */
   const state = { mode: 'can', busy: false, tr: null, canSpin: 0, canFlip: 0 };
@@ -320,6 +322,15 @@ async function init() {
     document.body.classList.remove('shake');
   }
 
+  function cancelTransform(tr) {
+    tr.src.reveal.uGlow.value = 0;
+    state.busy = false;
+    state.tr = null;
+    setButton(state.mode, false);
+    document.body.classList.remove('shake');
+    popup('she missed her cue. try again?');
+  }
+
   function finishTransform(tr) {
     tr.src.object.visible = false;
     tr.src.reveal.uReveal.value = -1e4;
@@ -351,6 +362,12 @@ async function init() {
     else tr.src.object.position.y = PEDESTAL_TOP + Math.pow(charge, 2) * 0.12;
 
     if (!tr.started && tr.t >= T_CHARGE) {
+      if (!baddie) {
+        // she's still streaming in: hold the charge until she arrives
+        tr.t = T_CHARGE;
+        if (baddieFailed) cancelTransform(tr);
+        return;
+      }
       tr.started = true;
       beginMorph(tr);
     }
@@ -434,7 +451,7 @@ async function init() {
         can.position.y = 0;
       }
     }
-    if (baddie.root.visible) baddie.update(t, dt, pointer);
+    if (baddie && baddie.root.visible) baddie.update(t, dt, pointer);
 
     const transforming = !!state.tr;
     stage.update(t, dt, {
@@ -449,10 +466,12 @@ async function init() {
 
   // ?mode=baddie skips straight to her (handy for screenshots)
   if (new URLSearchParams(window.location.search).get('mode') === 'baddie') {
+    await baddieReady;
+    if (!baddie) throw new Error('the baddie failed to load');
     canRig.visible = false;
     canReveal.uReveal.value = -1e4;
     baddie.root.visible = true;
-    baddieReveal.uReveal.value = 1e4;
+    rigs.baddie.reveal.uReveal.value = 1e4;
     state.mode = 'baddie';
     document.body.dataset.mode = 'baddie';
     const f = frame('baddie');
@@ -463,7 +482,7 @@ async function init() {
 
   // Compile every shader (and upload the big textures) behind the loading
   // screen so the first transformation doesn't stutter.
-  const hidden = [canRig, baddie.root, particles.points].filter((o) => !o.visible);
+  const hidden = [canRig, particles.points].filter((o) => !o.visible);
   hidden.forEach((o) => (o.visible = true));
   try {
     await renderer.compileAsync(scene, camera);
@@ -471,9 +490,7 @@ async function init() {
     /* compileAsync is only an optimisation */
   }
   hidden.forEach((o) => (o.visible = false));
-  [tex.face.open, tex.face.closed, tex.corset, tex.fishnet, tex.mesh, tex.tartan, tex.hair].forEach((t) =>
-    renderer.initTexture(t),
-  );
+  renderer.initTexture(canAsset.map);
 
   renderer.setAnimationLoop(tick);
   setButton(state.mode, false);
@@ -491,6 +508,9 @@ async function init() {
     },
     get transformTime() {
       return state.tr ? state.tr.t : -1;
+    },
+    get ready() {
+      return !!baddie;
     },
     camera,
     controls,
